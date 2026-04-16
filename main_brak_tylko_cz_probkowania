@@ -1,0 +1,135 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import tkinter as tk
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+
+root = tk.Tk()
+root.title("Symulacja układu")
+frame = tk.Frame(root)
+frame.pack(side="left", fill="y", padx=10, pady=10)
+
+def dodaj_suwak(nazwa_suwaka, wart_min, wart_max, krok, wart_poczatkowa):
+    ramka = tk.Frame(frame)
+    ramka.pack(pady=5)
+
+    tk.Label(ramka, text=nazwa_suwaka).pack(pady=(1,1))
+
+    suwak = tk.Scale(ramka,
+      from_=wart_min,
+      to=wart_max,
+      resolution=krok,
+      orient=tk.HORIZONTAL,
+      length=300)
+    suwak.set(wart_poczatkowa)
+    suwak.pack()
+
+    # min/max POD suwakiem
+    tk.Label(ramka, text=f"min: {wart_min}                      max: {wart_max}").pack(pady=(0,10))
+
+    return suwak
+
+
+suwaki = {}
+suwaki['amplituda'] = dodaj_suwak("Amplituda sygnału", 0.5, 5, 0.1, 1)
+suwaki['czestotliwosc'] = dodaj_suwak("Częstotliwość sygnału", 0.5, 10, 0.1, 1)
+suwaki['B'] = dodaj_suwak("Amplituda przekaźnika B", 0.5, 5, 0.1, 1)
+suwaki['b'] = dodaj_suwak("Histereza b", 0.1, 1, 0.1, 0.5)
+suwaki['T'] = dodaj_suwak("Tłumienie T", 0.1, 5, 0.1, 1)
+suwaki['Kp'] = dodaj_suwak("Wzmocnienie Kp", 0.1, 5, 0.1, 1)
+suwaki['Tp'] = dodaj_suwak("Stała czasowa Tp", 0.01, 1, 0.01, 0.1)
+suwaki['liczba_okresow'] = dodaj_suwak("Liczba okresów", 0.1, 10, 0.1, 2)
+
+
+fig, ax = plt.subplots(figsize=(6,4))
+canvas = FigureCanvasTkAgg(fig, master=root)
+canvas.get_tk_widget().pack(side="right", fill="both", expand=True)
+
+
+typ_sygnalu = tk.StringVar()
+typ_sygnalu.set("H")  # domyślnie harmoniczny
+
+# funkcje sygnałów
+def sygnal_prostokatny(time, amplituda, czestotliwosc):
+    return amplituda * np.sign(np.sin(2*np.pi*czestotliwosc*time))
+
+def sygnal_sinus(time, amplituda, czestotliwosc):
+    return amplituda * np.sin(2*np.pi*czestotliwosc*time)
+
+def sygnal_trojkatny(time, amplituda, czestotliwosc):
+    return 2*amplituda * np.abs((czestotliwosc*2*time)%2 - 1) - amplituda
+
+def rysuj(arg=None):
+    amplituda = suwaki['amplituda'].get()
+    czestotliwosc = suwaki['czestotliwosc'].get()
+    B = suwaki['B'].get()
+    b = suwaki['b'].get()
+    T = suwaki['T'].get()
+    Kp = suwaki['Kp'].get()
+    Tp = suwaki['Tp'].get()
+    liczba_okresow = suwaki['liczba_okresow'].get()
+
+    czas_trwania = liczba_okresow / czestotliwosc
+    czestotliwosc_probkowania = czestotliwosc * 20
+    time = np.linspace(0, czas_trwania, int(czas_trwania*czestotliwosc_probkowania))
+
+    if typ_sygnalu.get() == "P":
+        r = sygnal_prostokatny(time, amplituda, czestotliwosc)
+    elif typ_sygnalu.get() == "T":
+        r = sygnal_trojkatny(time, amplituda, czestotliwosc)
+    else:
+        r = sygnal_sinus(time, amplituda, czestotliwosc)
+
+    e = np.zeros(len(r))
+    e2 = np.zeros(len(r))
+    u = np.zeros(len(r))
+    y = np.zeros(len(r))
+    y2 = np.zeros(len(r))
+
+    e[0] = r[0]
+    e2[0] = e[0]
+    u[0] = B if e2[0] > b else -B
+    y[0] = 0
+    y2[0] = 0
+
+    TT = 1 / czestotliwosc_probkowania
+
+    for t in range(1, len(r)):
+        e[t] = r[t] - y[t-1]
+        e2[t] = e[t] - T*y2[t-1]
+
+        if e2[t] > b:
+            u[t] = B
+        elif e2[t] < -b:
+            u[t] = -B
+        else:
+            u[t] = u[t-1]
+
+        y2[t] = (TT*u[t]*Kp + Tp*y2[t-1])/(TT + Tp)
+        y[t] = y[t-1] + y2[t]*TT
+
+    ax.clear()
+    ax.plot(time, r)
+    ax.plot(time, e)
+    ax.plot(time, e2)
+    ax.plot(time, u)
+    ax.plot(time, y)
+    ax.plot(time, y2)
+
+    ax.legend(["r(t)-sygnał wejściowy","e(t)-pierszy sumator","e2(t)-drugi sumator","u(t)-sygnał z przekaźnika","y(t)-sygnał wyjściowy","y2(t)-sygnał wyjściowy przed całkowaniem"])
+    ax.set_xlabel("Czas [s]")
+    ax.set_ylabel("Wartość sygnału")
+    ax.grid()
+    canvas.draw()
+
+# podpięcie suwaków pod rysowanie w RT-real time
+for suwak in suwaki.values():
+    suwak.configure(command=rysuj)
+
+# zmiana wygladu sygnalu w RT
+tk.Radiobutton(frame, text="Prostokątny", variable=typ_sygnalu, value="P", command=rysuj).pack(pady=2)
+tk.Radiobutton(frame, text="Trójkątny", variable=typ_sygnalu, value="T", command=rysuj).pack(pady=2)
+tk.Radiobutton(frame, text="Harmoniczny", variable=typ_sygnalu, value="H", command=rysuj).pack(pady=2)
+
+rysuj()
+root.mainloop()
